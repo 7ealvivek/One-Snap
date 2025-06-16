@@ -122,7 +122,8 @@ Before you can run One Snap, ensure you have the following installed on your sys
     ```bash
     python3 -m venv venv
     source venv/bin/activate # On Windows: .\venv\Scripts\activate
-    pip install requests tqdm slack_sdk
+    python -m pip install --upgrade pip --no-user
+    pip install requests tqdm slack_sdk / pip install requests tqdm slack_sdk --no-user  #Use any one which works ( Just install the Dependencies )
     ```
     (You may create a `requirements.txt` file with these dependencies and use `pip install -r requirements.txt` instead.)
 
