@@ -196,7 +196,46 @@ Choose one or more to filter the Chaos data to specific platforms. If none are c
 *   `-yeswehack`: Include programs from YesWeHack.
 *   `-hackandproof`: Include programs from HackenProof.
 
----
+
+## Quick Start Example
+
+To give you a quick taste of how One Snap works, here's an example of running it from the command line, specifically targeting Bugcrowd programs. Notice the custom startup banner, the efficient filtered Chaos download progress, and the reminder to configure API keys for full functionality (as C99.nl queries are skipped if keys aren't set):
+
+```bash
+(venv) vivekkashyap@Viveks-MacBook-Air One-Snap % python3 OneSnap.py -bugcrowd
+
+ ___````````````````````______```````````````````````````
+`.'````.````````````````.'`____`\``````````````````````````
+/``.-.``\`_`.--.``.---.`|`(___`\_|_`.--.```,--.``_`.--.```
+|`|```|`|[``.-.`|/`/__\\`_.____`.`[``.-.`|``'_\`:[`'/'`\`\`
+\```-'``/`|`|`|`||`\__.,|`\____)`|`|`|`|`|`//`|`|,|`\__/`|`
+``.___.'`[___||__]'.__.'`\______.'[___||__]\'-;__/|`;.__/``
+`````````````````````````````````````````````````[__|``````
+
+       One Snap: The Universal Bounty Subdomain Harvester
+
+--------------------------------------------------------------------------------
+                                           Developed by:
+                                           X (Twitter): @starkcharry
+                                           Bugcrowd: bugcrowd.com/realvivek
+                                           GitHub: @7ealvivek
+--------------------------------------------------------------------------------
+
+[*] Fetching Chaos index from: https://chaos-data.projectdiscovery.io/index.json
+[*] Performing filtered Chaos data collection for platforms: bugcrowd.
+[*] Filtering Chaos downloads for platforms: bugcrowd
+[*] Identified 100 Chaos ZIPs matching specified platforms.
+[↓] Downloading & Extracting Chaos Zips: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:02<00:00, 33.64it/s]
+[*] Identified 100 primary root domains from Chaos index for selected platforms.
+[*] Querying C99.nl with 514 unique public root domains...
+[!] C99_API_KEY is not configured. Please set your actual key in the script. Skipping C99 queries.
+[*] Total unique subdomains collected: 1588143
+[*] Saving 1588143 unique subdomains to final_allsubs.txt and zipping to final_allsubs.zip...
+[✓] Final list saved: final_allsubs.txt and final_allsubs.zip
+[*] Cleaning up intermediate directories...
+[✓] Cleanup complete.
+(venv) vivekkashyap@Viveks-MacBook-Air One-Snap %
+```
 
 **CLI Examples:**
 
