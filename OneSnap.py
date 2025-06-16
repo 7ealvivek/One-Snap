@@ -7,7 +7,7 @@ import zipfile
 import json
 import shutil
 import time
-import concurrent.futures
+import concurrent.futures # Still needed for other parts, even if not for query_c99's main loop
 from pathlib import Path
 from tqdm import tqdm
 from slack_sdk import WebClient
@@ -31,9 +31,15 @@ SCRIPT_NAME = "One Snap: The Universal Bounty Subdomain Harvester"
 AUTHOR = "x.com/starkcharry | github.com/7ealvivek | bugcrowd.com/realvivek"
 # IMPORTANT: Replace these placeholder values with your actual API keys/tokens.
 # DO NOT commit your actual keys to a public repository!
-C99_API_KEY = "[YOUR_C99_API_KEY_HERE]"
-SLACK_TOKEN = "[YOUR_SLACK_TOKEN_HERE]"
+C99_API_KEY = "hehehehe"
+SLACK_TOKEN = "[YOUR_SLACK_TOKEN_HERE_IF_YOU_WANT_TO_GET_ZIP_FILE_OVER_SLACK_ELSE_NOT_IMPORTANT]"
 SLACK_CHANNEL = "#all-subdomains" # Customize your Slack channel name here, e.g., "#recon-results"
+
+# C99.nl API Rate Limiting Configuration
+# For shared/free C99.nl API keys, a higher delay might be necessary to avoid errors.
+# If you still see "Unknown error" or timeouts for C99.nl, increase this value.
+# Be aware: higher values mean significantly longer C99.nl query times.
+C99_DOMAIN_DELAY = 10 # Seconds to wait between each individual C99.nl API query for a domain.
 
 # Directory and File Names
 ZIP_DIR = "chaos_zips"
@@ -310,7 +316,7 @@ def get_platform_roots_from_chaos_index(chaos_index_data, selected_platforms):
     return platform_roots
 
 def query_c99(domains):
-    """Queries the C99.nl API for subdomains given a list of root domains."""
+    """Queries the C99.nl API for subdomains given a list of root domains sequentially with a delay."""
     result = set()
     if not domains:
         return result
@@ -320,54 +326,43 @@ def query_c99(domains):
         print("[!] C99_API_KEY is not configured. Please set your actual key in the script. Skipping C99 queries.")
         return result
 
-    def query_single_domain(domain):
+    def query_single_domain_and_handle_retry(domain):
+        """Helper to query a single domain, handling explicit rate limits."""
+        res = requests.get(
+            f"https://api.c99.nl/subdomainfinder?key={C99_API_KEY}&domain={domain}&realtime=true&json",
+            timeout=10 # Timeout for each request
+        ).json()
+        if res.get("status") == "success":
+            return {s["subdomain"].strip().lstrip("*.") for s in res.get("subdomains", []) if s.get("subdomain")}
+        else:
+            error_msg = res.get("error", "Unknown error")
+            if "rate limit" in error_msg.lower():
+                return "RATE_LIMITED" # Special signal
+            return set() # Return empty set for other errors
+
+    # Process domains sequentially to respect per-domain delay
+    for domain in tqdm(domains, desc="[C99] Querying domains"):
         try:
-            res = requests.get(
-                f"https://api.c99.nl/subdomainfinder?key={C99_API_KEY}&domain={domain}&realtime=true&json",
-                timeout=10 # Add a timeout for API requests
-            ).json()
-            if res.get("status") == "success":
-                # Ensure 'subdomain' key exists and is not empty before adding
-                return {s["subdomain"].strip().lstrip("*.") for s in res.get("subdomains", []) if s.get("subdomain")}
-            else:
-                error_msg = res.get("error", "Unknown error")
-                if "rate limit" in error_msg.lower():
-                    print(f"\n[!] C99 API Rate Limit hit for {domain}. Pausing...")
-                    return "RATE_LIMITED" # Special signal for rate limit
-                print(f"\n[!] C99 API error for {domain}: {error_msg}")
-                return set()
+            query_result = query_single_domain_and_handle_retry(domain)
+            
+            if query_result == "RATE_LIMITED":
+                print(f"\n[!] C99 API Rate Limit hit for {domain}. Waiting for 60 seconds...")
+                time.sleep(60) # Longer pause on explicit rate limit
+                query_result = query_single_domain_and_handle_retry(domain) # Re-query after wait
+                if query_result == "RATE_LIMITED":
+                    print(f"[!] Still rate-limited for {domain} after retry. Skipping this domain.")
+                    continue # Skip if still rate-limited
+            
+            result.update(query_result)
         except requests.exceptions.RequestException as e:
             print(f"\n[!] C99 API request failed for {domain}: {e}")
-            return set()
         except json.JSONDecodeError:
-            print(f"\n[!] C99 API returned invalid JSON for {domain}. Response might not be JSON or empty.")
-            return set()
+            print(f"\n[!] C99 API returned invalid JSON for {domain}.")
         except Exception as e:
             print(f"\n[!] An unexpected error occurred during C99 query for {domain}: {e}")
-            return set()
-
-    # Using conservative C99 query parameters for better resilience against API errors
-    chunk_size = 50 # Number of domains per concurrent chunk (reduced from 100)
-    domain_chunks = [domains[i:i + chunk_size] for i in range(0, len(domains), chunk_size)]
-
-    for idx, chunk in enumerate(domain_chunks, 1):
-        print(f"[C99] Processing chunk {idx}/{len(domain_chunks)} ({len(chunk)} root domains)")
-        rate_limit_hit_in_chunk = False
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor: # Reduced from 10 to 3
-            futures = {executor.submit(query_single_domain, d): d for d in chunk}
-            for f in tqdm(concurrent.futures.as_completed(futures), total=len(chunk), desc=f"[C99 Chunk {idx}]"):
-                res = f.result()
-                if res == "RATE_LIMITED":
-                    rate_limit_hit_in_chunk = True
-                    break # Stop processing current chunk on rate limit
-                result.update(res)
         
-        if rate_limit_hit_in_chunk:
-            print("[!] C99 API rate limit hit. Waiting for 60 seconds before resuming (if possible).")
-            time.sleep(60) # Longer pause on rate limit
-        elif idx < len(domain_chunks):
-            print("[*] Waiting 10 seconds before next C99 chunk...") # Increased from 5 to 10
-            time.sleep(10)
+        # Add the configurable delay after each domain query
+        time.sleep(C99_DOMAIN_DELAY)
 
     return result
 
@@ -569,6 +564,7 @@ def run_one_snap(private_txt=None, upload_slack=False, rerun_chaos=False, run_ht
     # Perform C99 enrichment on all collected unique public roots (from platforms AND/OR extracted Chaos data)
     if public_root_domains_for_c99:
         print(f"[*] Querying C99.nl with {len(public_root_domains_for_c99)} unique public root domains...")
+        # C99_DOMAIN_DELAY will be used for this call
         c99_public_enriched_subs.update(query_c99(list(public_root_domains_for_c99)))
     else:
         print("[!] No public root domains to query C99.nl with.")
@@ -586,6 +582,7 @@ def run_one_snap(private_txt=None, upload_slack=False, rerun_chaos=False, run_ht
             if private_subs:
                 private_roots = get_root_domains(private_subs)
                 if private_roots:
+                    # C99_DOMAIN_DELAY will be used for this call
                     c99_private_enriched_subs = query_c99(private_roots)
                 else:
                     print(f"[!] No root domains extracted from private file '{private_txt}' for C99 enrichment.")
