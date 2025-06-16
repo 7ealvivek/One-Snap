@@ -113,7 +113,7 @@ Before you can run One Snap, ensure you have the following installed on your sys
 
 1.  **Clone the Repository:**
     ```bash
-    git clone https://github.com/7ealvivek/one-snap.git # Replace with your actual repo URL
+    git clone https://github.com/7ealvivek/one-snap.git
     cd one-snap
     ```
 
