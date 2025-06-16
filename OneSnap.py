@@ -15,14 +15,14 @@ from slack_sdk.errors import SlackApiError
 import subprocess
 import sys
 
-# ASCII Art for startup banner
-ASCII_BANNER = """
+# ASCII Art for startup banner (using raw string to fix escape sequence warning)
+ASCII_BANNER = r"""
  ___````````````````````______```````````````````````````
-`.'````.````````````````.'`____`\\``````````````````````````
-/``.-.``\\`_`.--.``.---.`|`(___`\\_|_`.--.```,--.``_`.--.```
-|`|```|`|[``.-.`|/`/__\\\\`_.____`.`[``.-.`|``'_\`:[`'/'`\\`\\
-\\```-'``/`|`|`|`||`\\__.,|`\\____)`|`|`|`|`|`//`|`|,|`\\__/`|`
-``.___.'`[___||__]'.__.'`\\______.'[___||__]\\'-;__/|`;.__/``
+`.'````.````````````````.'`____`\``````````````````````````
+/``.-.``\`_`.--.``.---.`|`(___`\_|_`.--.```,--.``_`.--.```
+|`|```|`|[``.-.`|/`/__\\`_.____`.`[``.-.`|``'_\`:[`'/'`\`\`
+\```-'``/`|`|`|`||`\__.,|`\____)`|`|`|`|`|`//`|`|,|`\__/`|`
+``.___.'`[___||__]'.__.'`\______.'[___||__]\'-;__/|`;.__/``
 `````````````````````````````````````````````````[__|``````
 """
 
@@ -102,7 +102,6 @@ class OneSnapGUI:
             "yeswehack": tk.BooleanVar(),
             "hackenproof": tk.BooleanVar(),
         }
-        # Use a frame to arrange checkboxes in two columns if desired, or keep single column
         platform_frame = tk.Frame(master)
         platform_frame.pack(anchor="w", padx=20, pady=5)
         
@@ -138,24 +137,29 @@ class OneSnapGUI:
         upload_to_slack = self.slack_var.get()
         rerun_chaos = self.rerun_chaos_var.get()
         run_httpx = self.httpx_var.get()
-        selected_platforms = [p for p, var in self.platform_vars.items() if var.get()]
+        
+        # Collect selected platforms from checkboxes
+        selected_platforms_from_gui = []
+        for platform_name, var in self.platform_vars.items():
+            if var.get(): # If the checkbox is ticked
+                selected_platforms_from_gui.append(platform_name)
 
         # Disable button during run
         self.run_button.config(state=tk.DISABLED, text="Running...")
         self.master.update_idletasks() # Update GUI immediately
 
         try:
-            run_one_snap(self.private_file, upload_to_slack, rerun_chaos, run_httpx, selected_platforms)
+            run_one_snap(self.private_file, upload_to_slack, rerun_chaos, run_httpx, selected_platforms_from_gui)
             messagebox.showinfo("Success", "One Snap: Done! Final list is ready.")
-        except SystemExit as e: # Catch sys.exit() calls from run_one_snap
-            if e.code != 0: # Only show error if it was a non-zero exit (error)
+        except SystemExit as e:
+            if e.code != 0:
                 messagebox.showerror("Error", f"One Snap encountered an error: {e}")
-            else: # If it was a clean exit (e.g., no subdomains found)
+            else:
                 messagebox.showinfo("Finished", "One Snap: No subdomains collected or process exited gracefully.")
         except Exception as e:
             messagebox.showerror("Unexpected Error", f"An unexpected error occurred: {e}")
         finally:
-            self.run_button.config(state=tk.NORMAL, text="Run One Snap", bg='darkgreen', fg='white') # Re-enable button
+            self.run_button.config(state=tk.NORMAL, text="Run One Snap", bg='darkgreen', fg='white')
 
 # Utility functions
 
@@ -175,7 +179,7 @@ def fetch_chaos_index():
 
 def download_chaos(chaos_index_data, selected_platforms=None):
     """
-    Downloads Chaos Project ZIP files.
+    Downloads Chaos Project ZIP files with enhanced retries for network/DNS issues.
     If selected_platforms is provided (a list of platform names), only ZIPs for those platforms are downloaded.
     Otherwise, all Chaos ZIPs are downloaded.
     """
@@ -206,29 +210,66 @@ def download_chaos(chaos_index_data, selected_platforms=None):
         print("[*] No specific platforms selected for filtering. Downloading all Chaos Project ZIPs.")
         urls_to_download = [item["URL"] for item in chaos_index_data]
 
+    # Use a requests Session for better connection management and retries
+    session = requests.Session()
+    # Configure an HTTPAdapter for retries on connection errors (including DNS)
+    retries = requests.packages.urllib3.util.retry.Retry(
+        total=10,  # Increased total retries (1 initial + 10 retries = 11 attempts)
+        backoff_factor=0.7, # Exponential backoff: 0.7s, 1.4s, 2.8s, 5.6s, 11.2s, etc.
+        status_forcelist=[429, 500, 502, 503, 504], # Retry on these HTTP status codes (429 = Too Many Requests)
+        allowed_methods=frozenset(['GET']), # Only retry GET requests
+        respect_retry_after_header=True, # Respect 'Retry-After' header if present
+        connect=True, # Enable retries for connection errors (including NameResolutionError, TLS errors)
+        read=True, # Enable retries for read timeouts
+        redirect=True # Enable retries for redirects
+    )
+    adapter = requests.adapters.HTTPAdapter(max_retries=retries)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+
+    failed_downloads = [] # List to store URLs that failed to download even after retries
+
     for url in tqdm(urls_to_download, desc="[↓] Downloading & Extracting Chaos Zips"):
         zip_path = os.path.join(ZIP_DIR, os.path.basename(url))
         if not os.path.exists(zip_path):
             try:
-                r = requests.get(url, stream=True, timeout=15) # Add timeout for download
-                r.raise_for_status() # Raise an exception for bad status codes (e.g., 404, 500)
+                # Use the session for the request, timeout for each attempt
+                r = session.get(url, stream=True, timeout=30) # Increased individual attempt timeout
+                r.raise_for_status() # Raise an exception for bad status codes
                 with open(zip_path, 'wb') as f:
                     shutil.copyfileobj(r.raw, f)
-            except requests.exceptions.RequestException as e:
-                print(f"\n[!] Failed to download {url}: {e}") # Added \n for cleaner output with tqdm
+            except requests.exceptions.ConnectionError as e:
+                # Catches NameResolutionError, Max retries exceeded for connection, etc.
+                print(f"\n[!] Connection error for {url} after retries: {e}")
+                failed_downloads.append(url)
+                time.sleep(2) # Pause for 2 seconds before trying next URL to give network/DNS a break
                 continue # Skip to next URL
+            except requests.exceptions.RequestException as e:
+                # Catches other request-related exceptions (e.g., HTTPError for 404/500, general Timeout)
+                print(f"\n[!] Failed to download {url}: {e}")
+                failed_downloads.append(url)
+                time.sleep(2) # Pause for 2 seconds before trying next URL
+                continue
         
         try:
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(EXTRACT_DIR)
         except zipfile.BadZipFile:
-            print(f"\n[!] Corrupt zip file detected: {zip_path}. Attempting to remove and continue.") # Added \n
+            print(f"\n[!] Corrupt zip file detected: {zip_path}. Attempting to remove and continue.")
             try:
                 os.remove(zip_path) # Remove corrupt file so it might be re-downloaded later
             except OSError as e:
                 print(f"[!] Could not remove corrupt file {zip_path}: {e}")
+            failed_downloads.append(url) # Treat as a failure if corrupt
         except Exception as e:
-            print(f"\n[!] Error extracting {zip_path}: {e}") # Added \n
+            print(f"\n[!] Error extracting {zip_path}: {e}")
+            failed_downloads.append(url) # Treat as a failure if extraction fails
+
+    if failed_downloads:
+        print("\n[!] WARNING: The following Chaos ZIPs failed to download or extract after multiple retries:")
+        for failed_url in failed_downloads:
+            print(f"    - {failed_url}")
+        print("[!] This might indicate a persistent network issue, server problem, or corrupt file. Collected data may be incomplete.")
 
 def extract_chaos_subdomains():
     """Extracts all unique subdomains from text files in the Chaos extraction directory."""
@@ -274,7 +315,7 @@ def query_c99(domains):
     if not domains:
         return result
 
-    # Validate C99 API key
+    # Validate C99 API key (checks for both empty string and the placeholder)
     if not C99_API_KEY or C99_API_KEY == "[YOUR_C99_API_KEY_HERE]":
         print("[!] C99_API_KEY is not configured. Please set your actual key in the script. Skipping C99 queries.")
         return result
@@ -305,14 +346,14 @@ def query_c99(domains):
             print(f"\n[!] An unexpected error occurred during C99 query for {domain}: {e}")
             return set()
 
-    chunk_size = 50 # Reduced chunk size for potentially better rate limit handling
+    # Using conservative C99 query parameters for better resilience against API errors
+    chunk_size = 50 # Number of domains per concurrent chunk (reduced from 100)
     domain_chunks = [domains[i:i + chunk_size] for i in range(0, len(domains), chunk_size)]
 
     for idx, chunk in enumerate(domain_chunks, 1):
         print(f"[C99] Processing chunk {idx}/{len(domain_chunks)} ({len(chunk)} root domains)")
         rate_limit_hit_in_chunk = False
-        # Reduced max_workers for C99 to be gentler on API and avoid immediate rate limits
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor: 
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor: # Reduced from 10 to 3
             futures = {executor.submit(query_single_domain, d): d for d in chunk}
             for f in tqdm(concurrent.futures.as_completed(futures), total=len(chunk), desc=f"[C99 Chunk {idx}]"):
                 res = f.result()
@@ -325,8 +366,8 @@ def query_c99(domains):
             print("[!] C99 API rate limit hit. Waiting for 60 seconds before resuming (if possible).")
             time.sleep(60) # Longer pause on rate limit
         elif idx < len(domain_chunks):
-            print("[*] Waiting 5 seconds before next C99 chunk...")
-            time.sleep(5)
+            print("[*] Waiting 10 seconds before next C99 chunk...") # Increased from 5 to 10
+            time.sleep(10)
 
     return result
 
@@ -390,7 +431,6 @@ def run_httpx_scan(input_file=FINAL_ALL, output_file=HTTPX_OUT):
         return
 
     try:
-        # Get total lines for progress bar
         total_lines = 0
         with open(input_file, 'r', encoding='utf-8', errors='ignore') as f:
             for _ in f:
@@ -409,11 +449,12 @@ def run_httpx_scan(input_file=FINAL_ALL, output_file=HTTPX_OUT):
     # -l <input_file>: input list of subdomains
     # -o <output_file>: output file for results
     # -silent: suppress verbose output on stdout
-    # -threads 500: set high concurrency for speed (adjust based on system/network)
-    # -timeout 5: set 5 second timeout for HTTP requests
+    # -threads 1000: set high concurrency for speed (from original inspiration script)
+    # -timeout 3: set 3 second timeout for HTTP requests (from original inspiration script)
+    # Note: -cdn and -resume removed as requested
     httpx_command = [
         "httpx", "-l", input_file, "-o", output_file,
-        "-silent", "-threads", "500", "-timeout", "5"
+        "-silent", "-threads", "1000", "-timeout", "3"
     ]
 
     # Validate httpx availability
@@ -427,35 +468,30 @@ def run_httpx_scan(input_file=FINAL_ALL, output_file=HTTPX_OUT):
         return
 
     # Use a temporary file to capture httpx's stderr for progress parsing
-    # and then display it with tqdm
     temp_stderr_file = "httpx_progress_temp.txt"
     with open(temp_stderr_file, "w") as f_err:
         process = subprocess.Popen(httpx_command, stdout=subprocess.DEVNULL, stderr=f_err, text=True)
 
         start_time = time.time()
         with tqdm(total=total_lines, desc="[HTTPX]", unit="url", leave=True) as pbar:
-            while process.poll() is None: # While process is still running
-                time.sleep(1) # Check every second
-                f_err.flush() # Ensure data is written to disk
+            while process.poll() is None:
+                time.sleep(1)
+                f_err.flush()
                 try:
-                    # Read the last line for progress
                     with open(temp_stderr_file, 'r') as f:
                         lines = f.readlines()
                         if lines:
                             last_line = lines[-1].strip()
-                            # httpx progress format: [INFO] URLs: 12345/54321 | RPS: 123 | Misc: 123 | ...
                             if "URLs:" in last_line:
                                 parts = last_line.split("URLs:")[1].split("|")[0].strip().split("/")
                                 if len(parts) == 2:
                                     processed_count = int(parts[0].strip())
-                                    current_total = int(parts[1].strip()) # httpx might re-evaluate total
+                                    current_total = int(parts[1].strip())
                                     
-                                    # Update tqdm progress
-                                    pbar.total = current_total # Update total if httpx adjusted it
+                                    pbar.total = current_total
                                     pbar.n = processed_count
                                     pbar.refresh()
 
-                                    # Calculate elapsed and estimated remaining time
                                     elapsed_time = time.time() - start_time
                                     if processed_count > 0:
                                         urls_per_second = processed_count / elapsed_time
@@ -470,21 +506,17 @@ def run_httpx_scan(input_file=FINAL_ALL, output_file=HTTPX_OUT):
                             else:
                                 pbar.set_postfix_str(f"Waiting for httpx progress... {last_line[:50]}...")
 
-                except Exception as e:
-                    # print(f"[*] Error parsing httpx progress: {e}") # Uncomment for debugging parsing issues
-                    pass # Silently fail on parsing errors to avoid disrupting main progress bar
+                except Exception:
+                    pass
 
-        # Ensure tqdm finishes and closes
         pbar.close()
 
-    # Check the process's exit code
     if process.returncode == 0:
         print(f"[✓] HTTPX completed. Results saved to: {output_file}")
     else:
         print(f"[!] HTTPX failed with exit code {process.returncode}.")
         print(f"    Check '{temp_stderr_file}' for more details.")
     
-    # Clean up temporary stderr file
     if os.path.exists(temp_stderr_file):
         os.remove(temp_stderr_file)
 
@@ -516,12 +548,12 @@ def run_one_snap(private_txt=None, upload_slack=False, rerun_chaos=False, run_ht
     elif selected_bounty_platforms and chaos_index_data:
         # Scenario 3: Specific platforms selected AND Chaos index available. Filter Chaos download.
         print(f"[*] Performing filtered Chaos data collection for platforms: {', '.join(selected_bounty_platforms)}.")
-        download_chaos(chaos_index_data, selected_bounty_platforms)
+        download_chaos(chaos_index_data, selected_platforms) # Pass selected_platforms for filtering
         
         # Add roots from the selected platforms directly from the Chaos index for C99 enrichment
         # This covers cases where a program's primary domain (name) is relevant but may not appear immediately
         # in the extracted subdomains.
-        public_root_domains_for_c99.update(get_platform_roots_from_chaos_index(chaos_index_data, selected_bounty_platforms))
+        public_root_domains_for_c99.update(get_platform_roots_from_chaos_index(chaos_index_data, selected_platforms))
     else:
         print("[*] Skipping Chaos data collection (no platforms selected or no index, and no --rerun-chaos).")
 
@@ -602,7 +634,7 @@ if __name__ == '__main__':
     # Print Author and Contact details right below the banner
     print("--------------------------------------------------------------------------------")
     print("                                           Developed by:")
-    print("                                           X (Twitter): @starkcharry") # Updated X handle
+    print("                                           X (Twitter): @starkcharry")
     print("                                           Bugcrowd: bugcrowd.com/realvivek")
     print("                                           GitHub: @7ealvivek")
     print("--------------------------------------------------------------------------------\n")
@@ -615,7 +647,7 @@ if __name__ == '__main__':
         root.mainloop() # GUI mainloop will keep the script running
     else:
         parser = argparse.ArgumentParser(description="One Snap CLI: The Universal Bounty Subdomain Harvester",
-                                         formatter_class=argparse.RawTextHelpFormatter) # For multi-line help
+                                         formatter_class=argparse.RawTextHelpFormatter)
         
         parser.add_argument("--private", help="Path to a text file containing private subdomains (one per line).\n"
                                                "These will be included and enriched via C99.nl.", required=False)
