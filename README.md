@@ -144,9 +144,9 @@ Open `one_snap.py` in a text editor and modify these lines:
 
 ```python
 # Constants
-C99_API_KEY = "hehehe" # <-- REPLACE THIS!
-SLACK_TOKEN = "hehehehe" # <-- REPLACE THIS!
-SLACK_CHANNEL = "#all-subdomains" # <-- REPLACE THIS with your desired channel, e.g., "#recon-results"
+C99_API_KEY = "hehehe" # <-- REPLACE THIS! ( IMPORTANT )
+SLACK_TOKEN = "hehehehe" # <-- REPLACE THIS! ( OPTIONAL )
+SLACK_CHANNEL = "#all-subdomains" # ( OPTIONAL ) <-- REPLACE THIS with your desired channel, ( OPTIONAL )
 ```
 
 *   **C99.nl API Key:** Obtain one from [c99.nl](https://c99.nl/). Free tiers often have usage limits.
@@ -245,7 +245,7 @@ To give you a quick taste of how One Snap works, here's an example of running it
     ```
     *(This downloads ALL Chaos data, extracts subdomains, enriches with C99.nl, runs `httpx`, and saves outputs. No Slack upload.)*
 
-2.  **Targeted HackerOne & Bugcrowd Programs with Private List, Upload to Slack:**
+2.  **Targeted HackerOne & Bugcrowd Programs with Private List, Upload to Slack ( OPTIONAL SLACK ):**
     ```bash
     python3 one_snap.py -h1 -bugcrowd --private my_targets.txt --slack
     ```
@@ -255,11 +255,11 @@ To give you a quick taste of how One Snap works, here's an example of running it
     ```bash
     python3 one_snap.py --private my_company_scope.txt --httpx
     ```
-    *(This processes only your private list, enriches it with C99.nl, runs `httpx`, and saves outputs. No Chaos download or Slack upload.)*
+    *(This processes only your private list, enriches it with C99.nl TO THE ROOT DOMAINS, runs `httpx`, and saves outputs. No Chaos download or Slack upload.)*
 
-4.  **Force Full Chaos + HackerOne (as explicit additional targets) + HTTPX:**
+4.  **Force Full Chaos + HTTPX:**
     ```bash
-    python3 one_snap.py --rerun-chaos -h1 --httpx
+    python3 one_snap.py --rerun-chaos --httpx
     ```
     *(`--rerun-chaos` forces a full Chaos download. `-h1` ensures HackerOne roots from the Chaos index are definitely included for C99 enrichment, even if they were covered by the full Chaos download.)*
 
@@ -269,24 +269,6 @@ To give you a quick taste of how One Snap works, here's an example of running it
     ```
 
 ---
-
-### Graphical User Interface (GUI)
-
-The GUI provides a user-friendly way to interact with One Snap without using the command line.
-
-1.  **Launch the GUI:**
-    ```bash
-    python3 one_snap.py
-    ```
-    *(Ensure `tkinter` is installed and you are in a graphical environment.)*
-
-2.  **GUI Window Breakdown:**
-    *   **"Select Private List" Button:** Click to open a file dialog and select your private subdomains `.txt` file. The selected path will be displayed.
-    *   **"Upload final ZIP to Slack" Checkbox:** Tick this to enable Slack upload.
-    *   **"Force full Chaos data download (ignores platform filter)" Checkbox:** Tick this to enable the `--rerun-chaos` behavior.
-    *   **"Run httpx after final list" Checkbox:** Tick this to enable the `httpx` scan.
-    *   **"Filter Chaos Data by Bounty Platform" Checkboxes:** Tick one or more of these (e.g., `Hackerone`, `Bugcrowd`) to filter Chaos downloads.
-    *   **"Run One Snap" Button:** Click this to start the process with your selected options. Progress messages will be displayed in the terminal where you launched the script. A pop-up will confirm completion or indicate errors.
 
 ---
 
